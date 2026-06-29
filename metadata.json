@@ -1,0 +1,6 @@
+{
+  "name": "115年度PGY導師研習營電子白板",
+  "description": "115年度醫師畢業後一般醫學訓練計畫導師研習營(第一場)議程國泰場小組討論電子白板，提供即時同步編輯、匿名便利貼、分組展示及AI導師智庫功能。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
