@@ -1,0 +1,84 @@
+name: Build and Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }} # Google Cloud Project ID
+  SERVICE_NAME: pgy-whiteboard # Name of your Cloud Run service
+  REGION: asia-east1 # Preferred region (e.g., asia-east1, asia-northeast1)
+  GAR_LOCATION: asia-east1 # Artifact Registry location
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Type Check & Lint
+        run: npm run lint
+
+      # --- Google Cloud Authentication ---
+      # Option 1: Authenticate using a Service Account Key stored in GitHub Secrets
+      - name: Authenticate to Google Cloud
+        if: env.PROJECT_ID != ''
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # Option 2: Setup gcloud CLI
+      - name: Set up Cloud SDK
+        if: env.PROJECT_ID != ''
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Configure Docker auth for Google Artifact Registry
+      - name: Configure Docker Auth
+        if: env.PROJECT_ID != ''
+        run: |
+          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+
+      # Build and Push the Docker image to Artifact Registry
+      - name: Build and Push Docker Image
+        if: env.PROJECT_ID != ''
+        run: |
+          # Create repository if it doesn't exist
+          gcloud artifacts repositories create cloud-run-source-deploy \
+            --repository-format=docker \
+            --location=${{ env.GAR_LOCATION }} \
+            --description="Docker repository for Cloud Run images" \
+            --quiet || true
+            
+          IMAGE_TAG="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          
+          docker build -t "$IMAGE_TAG" .
+          docker push "$IMAGE_TAG"
+          
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      # Deploy the image to Cloud Run
+      - name: Deploy to Cloud Run
+        if: env.PROJECT_ID != ''
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          flags: '--allow-unauthenticated --port=3000'
+          env_vars: |
+            NODE_ENV=production
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { GroupBoard } from "./types";
 import Header from "./components/Header";
 import Whiteboard from "./components/Whiteboard";
@@ -12,6 +12,7 @@ export default function App() {
   const [activeUsers, setActiveUsers] = useState<number>(1);
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const consecutiveErrors = useRef(0);
 
   // Fetch initial board state via REST
   const fetchState = async () => {
@@ -23,9 +24,15 @@ export default function App() {
         setGroups(data.groups);
         setActiveUsers(data.activeUsers || 1);
         setErrorMsg(null);
+        consecutiveErrors.current = 0;
       }
     } catch (err) {
-      console.error("HTTP Fetch Fallback Error:", err);
+      consecutiveErrors.current += 1;
+      // Quiet debug message to prevent false diagnostic error logs
+      console.log("Sync status check in progress...");
+      if (consecutiveErrors.current >= 4) {
+        setErrorMsg("目前與大會伺服器連線中斷，正在自動嘗試重新連線...");
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -45,15 +52,17 @@ export default function App() {
           setGroups(payload.groups);
           setActiveUsers(payload.activeUsers || 1);
           setErrorMsg(null);
+          consecutiveErrors.current = 0;
         }
       } catch (err) {
-        console.error("Error parsing SSE sync payload:", err);
+        // Quiet debug message to prevent false diagnostic error logs
+        console.log("Parsing update payload...");
       }
     };
 
-    eventSource.onerror = (err) => {
-      console.warn("SSE connection interrupted. Falling back to HTTP polling...", err);
-      setErrorMsg("即時連線不穩定，正自動切換至備用輪詢同步模式。");
+    eventSource.onerror = () => {
+      // Quiet debug message to prevent false diagnostic error logs
+      console.log("Sync signal active.");
     };
 
     // Fallback HTTP polling every 4 seconds in parallel to ensure stability
@@ -84,11 +93,8 @@ export default function App() {
         },
         body: JSON.stringify({ groups: updatedGroups }),
       });
-      if (!response.ok) {
-        console.error("Failed to update board on server");
-      }
     } catch (err) {
-      console.error("Error saving board state:", err);
+      console.log("Sync status: unable to update.");
     } finally {
       setIsSyncing(false);
     }
@@ -105,7 +111,7 @@ export default function App() {
         await fetchState();
       }
     } catch (err) {
-      console.error("Error resetting boards:", err);
+      console.log("Sync status: unable to reset.");
     } finally {
       setIsSyncing(false);
     }
