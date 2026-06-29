@@ -5,7 +5,6 @@ import {
   PenTool, Eye, X, HelpCircle, User, UserCheck, 
   ChevronRight, RefreshCw, Palette, Circle 
 } from "lucide-react";
-import AICoachPanel from "./AICoachPanel";
 import { standardCases } from "../casesData";
 import ConfirmModal from "./ConfirmModal";
 
@@ -685,12 +684,87 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
           </div>
         )}
 
-        {/* AI Tutor Assistant Panel */}
-        <div className="flex-1">
-          <AICoachPanel
-            groupId={board.id}
-            onAddAINote={(text) => handleAddNote(text)}
-          />
+        {/* Group Discussion Feed */}
+        <div className="bg-emerald-50/40 rounded-xl border border-emerald-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[300px]">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-cathay-green to-emerald-800 text-white px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-cathay-gold" />
+              <div>
+                <h3 className="font-bold text-sm tracking-wide">全組討論動態與回饋</h3>
+                <p className="text-[10px] text-emerald-100 leading-none">即時顯示所有便利貼的最新留言與意見</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Main Body */}
+          <div className="p-4 flex-1 flex flex-col gap-3 overflow-y-auto max-h-[500px]">
+            {(() => {
+              const allComments = board.notes.flatMap(note => 
+                (note.comments || []).map(comment => ({
+                  ...comment,
+                  noteId: note.id,
+                  noteText: note.text,
+                  noteColor: note.color,
+                  noteAuthor: note.author,
+                  noteIsAnonymous: note.isAnonymous
+                }))
+              ).sort((a, b) => b.createdAt - a.createdAt);
+
+              if (allComments.length === 0) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-gray-500">
+                    <div className="p-4 rounded-full bg-emerald-100/50 text-cathay-green mb-3">
+                      <MessageSquare className="w-8 h-8" />
+                    </div>
+                    <p className="text-xs font-medium text-gray-700 max-w-[220px]">
+                      目前尚無任何留言回饋。
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-1 max-w-[220px]">
+                      點擊便利貼右下角的「評論」圖示，即可開始撰寫意見並即時同步至主畫面！
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[11px] text-gray-500 font-medium">
+                    <span>共有 {allComments.length} 則討論意見</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">
+                      最新優先
+                    </span>
+                  </div>
+                  <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                    {allComments.map((cmt) => (
+                      <div 
+                        key={cmt.id} 
+                        onClick={() => setActiveCommentNoteId(cmt.noteId)}
+                        className="bg-white hover:bg-emerald-50/40 border border-gray-100 hover:border-emerald-100 rounded-lg p-2.5 text-left cursor-pointer transition shadow-xs group"
+                      >
+                        {/* Sticky Note Context */}
+                        <div 
+                          className="text-[9px] text-gray-400 truncate mb-1 pb-1 border-b border-gray-50 flex items-center gap-1 font-serif"
+                          style={{ borderLeftWidth: "3px", borderLeftColor: cmt.noteColor, paddingLeft: "4px" }}
+                        >
+                          <span className="font-sans font-semibold text-gray-500">便利貼:</span>
+                          <span className="italic">"{cmt.noteText}"</span>
+                        </div>
+                        
+                        <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1 font-mono">
+                          <span className="font-bold text-emerald-800">{cmt.author}</span>
+                          <span>{new Date(cmt.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                        </div>
+                        <div className="text-xs text-gray-700 leading-relaxed font-sans font-medium group-hover:text-gray-900 break-words">
+                          {cmt.text}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       </div>
 
