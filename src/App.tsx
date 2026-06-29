@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { GroupBoard } from "./types";
 import Header from "./components/Header";
 import Whiteboard from "./components/Whiteboard";
 import AllGroupsPresentation from "./components/AllGroupsPresentation";
-import { ChevronRight, Layers, HelpCircle, Activity, Globe, Compass, WifiOff } from "lucide-react";
-import { getBackendUrl, isOfflineMode, getDefaultGroups } from "./utils";
+import { ChevronRight, Layers, HelpCircle, Activity, Globe, Compass, WifiOff, Cloud } from "lucide-react";
+import { getDefaultGroups } from "./utils";
+import { db, handleFirestoreError, OperationType } from "./firebase";
+import { collection, doc, onSnapshot, setDoc, writeBatch } from "firebase/firestore";
 
 export default function App() {
   const [activeView, setActiveView] = useState<"board" | "presentation">("board");
@@ -13,179 +15,104 @@ export default function App() {
   const [activeUsers, setActiveUsers] = useState<number>(1);
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const consecutiveErrors = useRef(0);
 
-  // Fetch initial board state (online REST / offline LocalStorage)
-  const fetchState = async () => {
-    const offline = isOfflineMode();
-    if (offline) {
-      try {
-        setIsSyncing(true);
-        const stored = localStorage.getItem("whiteboard_groups");
-        if (stored) {
-          setGroups(JSON.parse(stored));
-        } else {
-          const defaults = getDefaultGroups();
-          setGroups(defaults);
-          localStorage.setItem("whiteboard_groups", JSON.stringify(defaults));
-        }
-        setActiveUsers(1);
-        setErrorMsg(null);
-      } catch (err) {
-        console.warn("Offline load failed:", err);
-      } finally {
-        setIsSyncing(false);
-      }
-      return;
-    }
-
-    // Online mode
-    try {
-      setIsSyncing(true);
-      const host = getBackendUrl();
-      const response = await fetch(`${host}/api/board`);
-      if (response.ok) {
-        const data = await response.json();
-        setGroups(data.groups);
-        setActiveUsers(data.activeUsers || 1);
-        setErrorMsg(null);
-        consecutiveErrors.current = 0;
-      }
-    } catch (err) {
-      consecutiveErrors.current += 1;
-      console.log("Sync status check in progress...");
-      if (consecutiveErrors.current >= 4) {
-        setErrorMsg("目前與大會伺服器連線中斷，正在自動嘗試重新連線...");
-      }
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // Connect to SSE stream or localStorage synchronization
+  // Connect to Firebase Firestore real-time synchronization
   useEffect(() => {
-    fetchState();
+    setIsSyncing(true);
+    const colRef = collection(db, "groups");
 
-    const offline = isOfflineMode();
-    if (offline) {
-      // Listen to cross-tab updates for same machine multi-window presentation
-      const handleStorageChange = (e: StorageEvent) => {
-        if (e.key === "whiteboard_groups" && e.newValue) {
-          setGroups(JSON.parse(e.newValue));
-        }
-      };
-      window.addEventListener("storage", handleStorageChange);
-      return () => {
-        window.removeEventListener("storage", handleStorageChange);
-      };
-    }
-
-    // Online EventSource configuration
-    const host = getBackendUrl();
-    let eventSource: EventSource | null = null;
-    
-    try {
-      eventSource = new EventSource(`${host}/api/sync-stream`);
-      
-      eventSource.onmessage = (event) => {
+    const unsubscribe = onSnapshot(
+      colRef,
+      async (snapshot) => {
         try {
-          const payload = JSON.parse(event.data);
-          if (payload && payload.groups) {
-            setGroups(payload.groups);
-            setActiveUsers(payload.activeUsers || 1);
-            setErrorMsg(null);
-            consecutiveErrors.current = 0;
+          if (snapshot.empty) {
+            // Seeding default groups if collection is empty
+            const defaults = getDefaultGroups();
+            const batch = writeBatch(db);
+            Object.keys(defaults).forEach((groupId) => {
+              const docRef = doc(db, "groups", groupId);
+              batch.set(docRef, defaults[groupId]);
+            });
+            try {
+              await batch.commit();
+            } catch (err) {
+              handleFirestoreError(err, OperationType.WRITE, "groups");
+            }
+            return;
           }
-        } catch (err) {
-          console.log("Parsing update payload...");
+
+          const updatedGroups: { [groupId: string]: GroupBoard } = {};
+          snapshot.docs.forEach((doc) => {
+            updatedGroups[doc.id] = doc.data() as GroupBoard;
+          });
+
+          // Ensure all default keys exist
+          const defaults = getDefaultGroups();
+          const mergedGroups = { ...defaults, ...updatedGroups };
+
+          setGroups(mergedGroups);
+          setErrorMsg(null);
+        } catch (err: any) {
+          console.error("Firestore loading error:", err);
+          setErrorMsg("無法與 Firebase 雲端同步，請檢查網路連線或金鑰設定。");
+        } finally {
+          setIsSyncing(false);
         }
-      };
-
-      eventSource.onerror = () => {
-        console.log("Sync signal active.");
-      };
-    } catch (e) {
-      console.warn("EventSource setup failed:", e);
-    }
-
-    // Fallback HTTP polling every 4 seconds in parallel to ensure stability
-    const pollingInterval = setInterval(fetchState, 4000);
+      },
+      (error) => {
+        console.error("Firestore listener error:", error);
+        setErrorMsg("Firebase 連線中斷，正自動嘗試重新連線...");
+        setIsSyncing(false);
+        // Throw structured error according to the skill
+        handleFirestoreError(error, OperationType.GET, "groups");
+      }
+    );
 
     return () => {
-      if (eventSource) eventSource.close();
-      clearInterval(pollingInterval);
+      unsubscribe();
     };
   }, []);
 
-  // Update board state on backend or local storage
+  // Update board state on Firebase
   const handleUpdateBoard = async (updatedBoard: GroupBoard) => {
-    // 1. Optimistic local update for sub-second visual feedback
-    const updatedGroups = {
-      ...groups,
+    // 1. Optimistic update
+    setGroups((prev) => ({
+      ...prev,
       [updatedBoard.id]: updatedBoard,
-    };
-    setGroups(updatedGroups);
+    }));
 
-    const offline = isOfflineMode();
-    if (offline) {
-      try {
-        localStorage.setItem("whiteboard_groups", JSON.stringify(updatedGroups));
-      } catch (e) {
-        console.warn("Offline save failed:", e);
-      }
-      return;
-    }
-
-    // 2. Persist to server
+    // 2. Persist to Firestore
     try {
       setIsSyncing(true);
-      const host = getBackendUrl();
-      await fetch(`${host}/api/board/update`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ groups: updatedGroups }),
-      });
+      const docRef = doc(db, "groups", updatedBoard.id);
+      await setDoc(docRef, updatedBoard);
     } catch (err) {
-      console.log("Sync status: unable to update.");
+      console.error("Firestore save failed:", err);
+      handleFirestoreError(err, OperationType.WRITE, `groups/${updatedBoard.id}`);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Reset entire boards
+  // Reset entire boards on Firebase
   const handleResetBoard = async () => {
-    const offline = isOfflineMode();
-    if (offline) {
-      try {
-        setIsSyncing(true);
-        const defaults = getDefaultGroups();
-        setGroups(defaults);
-        localStorage.setItem("whiteboard_groups", JSON.stringify(defaults));
-      } catch (e) {
-        console.warn("Offline reset failed:", e);
-      } finally {
-        setIsSyncing(false);
-      }
-      return;
-    }
-
     try {
       setIsSyncing(true);
-      const host = getBackendUrl();
-      const response = await fetch(`${host}/api/board/reset`, {
-        method: "POST",
+      const defaults = getDefaultGroups();
+      const batch = writeBatch(db);
+      Object.keys(defaults).forEach((groupId) => {
+        const docRef = doc(db, "groups", groupId);
+        batch.set(docRef, defaults[groupId]);
       });
-      if (response.ok) {
-        await fetchState();
-      }
+      await batch.commit();
     } catch (err) {
-      console.log("Sync status: unable to reset.");
+      console.error("Firestore reset failed:", err);
+      handleFirestoreError(err, OperationType.WRITE, "groups");
     } finally {
       setIsSyncing(false);
     }
   };
+
 
   const groupList: GroupBoard[] = Object.values(groups);
 
@@ -200,40 +127,18 @@ export default function App() {
         setActiveView={setActiveView}
       />
 
-      {/* Offline Mode Banner */}
-      {isOfflineMode() && (
-        <div className="bg-emerald-50 border-b border-emerald-150 text-emerald-900 text-[11px] px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 shadow-xs select-none">
-          <span className="flex items-center gap-1.5 font-medium">
-            <WifiOff className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-            <span>目前執行於「單機離線展示模式」（變更將儲存於此瀏覽器的 LocalStorage）。若您想與手機多裝置即時同步，請點擊此處</span>
-            <button
-              onClick={() => {
-                const url = prompt(
-                  "請輸入您的 Google Cloud Run 後端 API 網址 (例如 https://ais-dev-...run.app):",
-                  localStorage.getItem("whiteboard_backend_url") || ""
-                );
-                if (url !== null) {
-                  const cleaned = url.trim();
-                  if (cleaned) {
-                    localStorage.setItem("whiteboard_backend_url", cleaned);
-                  } else {
-                    localStorage.removeItem("whiteboard_backend_url");
-                  }
-                  window.location.reload();
-                }
-              }}
-              className="underline text-emerald-800 hover:text-emerald-950 font-bold ml-1 cursor-pointer"
-            >
-              配置雲端後端網址
-            </button>
-          </span>
-          <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded font-sans font-bold">
-            離線獨立運作
-          </span>
-        </div>
-      )}
+      {/* Firebase Cloud Sync Banner */}
+      <div className="bg-sky-50 border-b border-sky-100 text-sky-900 text-[11px] px-6 py-2 flex flex-wrap items-center justify-between gap-2 shadow-xs select-none">
+        <span className="flex items-center gap-1.5 font-medium">
+          <Cloud className="w-3.5 h-3.5 text-sky-600 shrink-0 animate-pulse" />
+          <span>大會 Firebase 雲端即時同步已啟用！所有裝置（含手機、平板）輸入後將立即互相同步呈現。</span>
+        </span>
+        <span className="text-[10px] text-sky-700 bg-sky-100/70 px-2 py-0.5 rounded font-sans font-bold">
+          雲端即時連線中
+        </span>
+      </div>
 
-      {/* Network Alert (Only displays if SSE fails) */}
+      {/* Network Alert (Only displays if SSE or Firestore fails) */}
       {errorMsg && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-6 py-2 flex items-center justify-between">
           <span className="flex items-center gap-1.5 font-medium">

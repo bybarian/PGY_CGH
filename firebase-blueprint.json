@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "Comment": {
+      "title": "Comment",
+      "description": "A comment on a note.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "author": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "text", "author", "createdAt"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "A sticky note on the whiteboard.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "color": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "author": { "type": "string" },
+        "isAnonymous": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "tilt": { "type": "number" },
+        "comments": {
+          "type": "array",
+          "description": "List of comments on this note"
+        }
+      },
+      "required": ["id", "text", "color", "x", "y", "author", "isAnonymous", "createdAt"]
+    },
+    "Point": {
+      "title": "Point",
+      "description": "A 2D coordinate point.",
+      "type": "object",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["x", "y"]
+    },
+    "DrawingPath": {
+      "title": "DrawingPath",
+      "description": "A freehand drawing path on the board.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "points": {
+          "type": "array",
+          "description": "Points making up the drawing path"
+        },
+        "color": { "type": "string" },
+        "width": { "type": "number" }
+      },
+      "required": ["id", "points", "color", "width"]
+    },
+    "GroupBoard": {
+      "title": "GroupBoard",
+      "description": "Whiteboard data for a single group.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "room": { "type": "string" },
+        "tutor": { "type": "string" },
+        "moderatorTitle": { "type": "string" },
+        "caseTitle": { "type": "string" },
+        "caseDescription": { "type": "string" },
+        "caseTarget": { "type": "string" },
+        "notes": {
+          "type": "array",
+          "description": "Sticky notes in this group board"
+        },
+        "drawings": {
+          "type": "array",
+          "description": "Freehand drawings on this group board"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "room",
+        "tutor",
+        "moderatorTitle",
+        "caseTitle",
+        "caseDescription",
+        "caseTarget",
+        "notes",
+        "drawings"
+      ]
+    }
+  },
+  "firestore": {
+    "groups/{groupId}": {
+      "schema": "GroupBoard",
+      "description": "Collection of group boards sync status."
+    }
+  }
+}
