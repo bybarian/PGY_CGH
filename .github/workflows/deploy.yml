@@ -76,6 +76,7 @@ jobs:
 
       # Deploy the image to Cloud Run
       - name: Deploy to Cloud Run
+        id: deploy
         if: env.PROJECT_ID != ''
         uses: google-github-actions/deploy-cloudrun@v2
         with:
@@ -85,3 +86,12 @@ jobs:
           flags: '--allow-unauthenticated --port=3000'
           env_vars: |
             NODE_ENV=production
+
+      - name: Show Cloud Run URL
+        if: env.PROJECT_ID != '' && steps.deploy.outputs.url != ''
+        run: |
+          echo "### 🚀 部署成功！" >> $GITHUB_STEP_SUMMARY
+          echo "您的網站已成功部署至 Google Cloud Run，網址如下：" >> $GITHUB_STEP_SUMMARY
+          echo "[👉 點擊開啟網站](${{ steps.deploy.outputs.url }})" >> $GITHUB_STEP_SUMMARY
+          echo "網址: ${{ steps.deploy.outputs.url }}"
+
