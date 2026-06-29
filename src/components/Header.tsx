@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Users, Server, RefreshCw, Layers } from "lucide-react";
+import { Users, Server, RefreshCw, Layers, QrCode, Copy, Check, ExternalLink, X } from "lucide-react";
 import ConfirmModal from "./ConfirmModal";
 
 interface HeaderProps {
@@ -20,6 +20,17 @@ export default function Header({
   const [jctImgErr, setJctImgErr] = useState(false);
   const [cathayImgErr, setCathayImgErr] = useState(false);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(err => {
+      console.warn("Failed to copy link:", err);
+    });
+  };
 
   return (
     <header className="relative w-full bg-white border-b border-gray-200 overflow-hidden select-none">
@@ -189,9 +200,18 @@ export default function Header({
               同步中...
             </span>
           )}
+          
+          <button
+            onClick={() => setIsQrModalOpen(true)}
+            className="flex items-center gap-1.5 text-[11px] text-emerald-800 hover:text-emerald-900 font-semibold bg-emerald-100 hover:bg-emerald-200/80 px-3 py-1 rounded transition shadow-xs border border-emerald-200/50 cursor-pointer"
+          >
+            <QrCode className="w-3.5 h-3.5 text-emerald-700" />
+            顯示網站 QR Code
+          </button>
+
           <button
             onClick={() => setIsResetConfirmOpen(true)}
-            className="flex items-center gap-1 text-[11px] text-red-600 hover:text-red-700 font-medium hover:underline border border-red-200 hover:bg-red-50 px-2 py-0.5 rounded transition"
+            className="flex items-center gap-1 text-[11px] text-red-600 hover:text-red-700 font-medium hover:underline border border-red-200 hover:bg-red-50 px-2 py-1 rounded transition cursor-pointer"
           >
             <RefreshCw className="w-3 h-3" />
             重設白板數據
@@ -213,6 +233,85 @@ export default function Header({
         }}
         onCancel={() => setIsResetConfirmOpen(false)}
       />
+
+      {/* QR Code Scanner Dialog Modal */}
+      {isQrModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[999] p-4 select-none animate-fadeIn">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-sm w-full overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-cathay-green to-emerald-800 text-white px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-cathay-gold animate-pulse" />
+                <h3 className="font-bold text-sm tracking-wide">掃描 QR Code 快速加入</h3>
+              </div>
+              <button
+                onClick={() => setIsQrModalOpen(false)}
+                className="p-1 hover:bg-emerald-700/50 rounded-full transition text-emerald-100 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 flex flex-col items-center text-center">
+              {/* QR Code Container */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-inner mb-4 relative group">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(window.location.href)}`}
+                  alt="QR Code"
+                  className="w-44 h-44 object-contain rounded"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              <p className="text-xs font-semibold text-gray-700 font-sans mb-1">
+                請用手機/平板掃描上方 QR Code
+              </p>
+              <p className="text-[10px] text-gray-500 leading-relaxed max-w-[260px] mb-5 font-sans">
+                大會學員可直接利用手機相機掃描二維碼，免登入免安裝，即可即時在本場電子白板張貼匿名便利貼、新增留言評論。
+              </p>
+
+              {/* URL and Action buttons */}
+              <div className="w-full space-y-2">
+                <div className="bg-slate-50 border border-slate-150 rounded-lg p-2 text-left flex items-center justify-between gap-2 overflow-hidden">
+                  <span className="text-[10px] text-slate-500 font-mono truncate select-all flex-1">
+                    {window.location.href}
+                  </span>
+                  <button
+                    onClick={handleCopyLink}
+                    className="p-1.5 hover:bg-slate-200 rounded transition text-slate-600 hover:text-slate-800 flex-shrink-0 cursor-pointer"
+                    title="複製網址"
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsQrModalOpen(false)}
+                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                  >
+                    關閉視窗
+                  </button>
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-2 bg-cathay-green hover:bg-cathay-green-hover text-white text-xs font-bold rounded-lg transition flex items-center justify-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    在新分頁開啟
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }
