@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Users, Server, RefreshCw, Layers, QrCode, Copy, Check, ExternalLink, X } from "lucide-react";
 import ConfirmModal from "./ConfirmModal";
+import jctLogo from "../assets/jct_logo.png";
+import cathayLogo from "../assets/cathay_logo.png";
 
 interface HeaderProps {
   activeUsers: number;
@@ -69,7 +71,7 @@ export default function Header({
             <div className="w-12 h-12 flex-shrink-0 flex items-center justify-center rounded-full border-2 border-red-800 bg-white shadow-sm relative overflow-hidden">
               {!jctImgErr ? (
                 <img
-                  src="/jct_logo.png"
+                  src={jctLogo}
                   alt="醫策會 Logo"
                   className="w-10 h-10 object-contain"
                   referrerPolicy="no-referrer"
@@ -113,7 +115,7 @@ export default function Header({
             <div className="flex items-center gap-2 bg-emerald-50/50 px-3 py-1.5 rounded-lg border border-emerald-100 shadow-sm overflow-hidden">
               {!cathayImgErr ? (
                 <img
-                  src="/cathay_logo.png"
+                  src={cathayLogo}
                   alt="國泰 Logo"
                   className="w-8 h-8 object-contain"
                   referrerPolicy="no-referrer"

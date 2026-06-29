@@ -69,6 +69,16 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
   const boardRef = useRef<HTMLDivElement>(null);
 
+  // Local state to store notes for responsive dragging/click-moving without constant database sync
+  const [localNotes, setLocalNotes] = useState<Note[]>(board.notes);
+
+  // Sync with incoming board notes when not actively dragging or click-moving
+  useEffect(() => {
+    if (!draggingNote && !clickMovingNote) {
+      setLocalNotes(board.notes);
+    }
+  }, [board.notes, draggingNote, clickMovingNote]);
+
   // Soft note colors
   const noteColors = [
     { value: "#fef08a", name: "活力黃" },
@@ -110,9 +120,10 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
     const updatedBoard = {
       ...board,
-      notes: [...board.notes, newNote],
+      notes: [...localNotes, newNote],
     };
 
+    setLocalNotes(updatedBoard.notes);
     onUpdateBoard(updatedBoard);
     if (!textOverride) {
       setNewNoteText("");
@@ -121,9 +132,9 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
   // Auto-Tidy / Align Notes Grouped by Color in a neat grid
   const handleTidyUpNotes = () => {
-    if (board.notes.length === 0) return;
+    if (localNotes.length === 0) return;
     
-    const sortedNotes = [...board.notes].sort((a, b) => {
+    const sortedNotes = [...localNotes].sort((a, b) => {
       // Group by color, then sort by creation date
       return a.color.localeCompare(b.color) || a.createdAt - b.createdAt;
     });
@@ -145,6 +156,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
       };
     });
 
+    setLocalNotes(updatedNotes);
     onUpdateBoard({
       ...board,
       notes: updatedNotes,
@@ -160,7 +172,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
       e.preventDefault();
       e.stopPropagation();
       setClickMovingNote(null);
-      onUpdateBoard({ ...board });
+      onUpdateBoard({ ...board, notes: localNotes });
       return;
     }
 
@@ -192,7 +204,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
     // Handle Click Moving (Note follows mouse without being dragged)
     if (clickMovingNote) {
-      const updatedNotes = board.notes.map((n) => {
+      const updatedNotes = localNotes.map((n) => {
         if (n.id === clickMovingNote.id) {
           const newX = Math.max(10, Math.min(boardRect.width - (n.width || 260) - 10, mouseX - clickMovingNote.offsetX));
           const newY = Math.max(10, Math.min(boardRect.height - (n.height || 120) - 10, mouseY - clickMovingNote.offsetY));
@@ -201,13 +213,13 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
         return n;
       });
 
-      onUpdateBoard({ ...board, notes: updatedNotes });
+      setLocalNotes(updatedNotes);
       return;
     }
 
     // Handle Note Dragging
     if (draggingNote) {
-      const updatedNotes = board.notes.map((n) => {
+      const updatedNotes = localNotes.map((n) => {
         if (n.id === draggingNote.id) {
           // Keep note within bounds of the board
           const newX = Math.max(10, Math.min(boardRect.width - (n.width || 260) - 10, mouseX - draggingNote.offsetX));
@@ -217,7 +229,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
         return n;
       });
 
-      onUpdateBoard({ ...board, notes: updatedNotes });
+      setLocalNotes(updatedNotes);
       return;
     }
 
@@ -232,6 +244,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
   const handleBoardMouseUp = (e: React.MouseEvent) => {
     if (draggingNote) {
       const boardRect = boardRef.current?.getBoundingClientRect();
+      let clickConvertedToMove = false;
       if (boardRect) {
         const mouseX = e.clientX - boardRect.left;
         const mouseY = e.clientY - boardRect.top;
@@ -245,11 +258,16 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
             offsetX: draggingNote.offsetX,
             offsetY: draggingNote.offsetY,
           });
+          clickConvertedToMove = true;
         }
       }
+      
       setDraggingNote(null);
-      // Trigger update back to server on drag end
-      onUpdateBoard({ ...board });
+      
+      // If we didn't convert to click-move, this was a regular drag. Commit final position to Firebase!
+      if (!clickConvertedToMove) {
+        onUpdateBoard({ ...board, notes: localNotes });
+      }
     }
 
     if (isDrawingMode && currentPath) {
@@ -276,7 +294,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
       e.preventDefault();
       e.stopPropagation();
       setClickMovingNote(null);
-      onUpdateBoard({ ...board });
+      onUpdateBoard({ ...board, notes: localNotes });
       return;
     }
 
@@ -298,12 +316,13 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
   // Save note edits
   const handleSaveNoteEdit = (noteId: string) => {
-    const updatedNotes = board.notes.map((n) => {
+    const updatedNotes = localNotes.map((n) => {
       if (n.id === noteId) {
         return { ...n, text: editingText };
       }
       return n;
     });
+    setLocalNotes(updatedNotes);
     onUpdateBoard({ ...board, notes: updatedNotes });
     setEditingNoteId(null);
   };
@@ -315,7 +334,8 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
   const confirmDeleteNote = () => {
     if (noteToDeleteId) {
-      const updatedNotes = board.notes.filter((n) => n.id !== noteToDeleteId);
+      const updatedNotes = localNotes.filter((n) => n.id !== noteToDeleteId);
+      setLocalNotes(updatedNotes);
       onUpdateBoard({ ...board, notes: updatedNotes });
       if (activeCommentNoteId === noteToDeleteId) {
         setActiveCommentNoteId(null);
@@ -335,7 +355,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
       createdAt: Date.now(),
     };
 
-    const updatedNotes = board.notes.map((n) => {
+    const updatedNotes = localNotes.map((n) => {
       if (n.id === noteId) {
         const comments = n.comments || [];
         return { ...n, comments: [...comments, newComment] };
@@ -343,6 +363,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
       return n;
     });
 
+    setLocalNotes(updatedNotes);
     onUpdateBoard({ ...board, notes: updatedNotes });
     setNewCommentText("");
   };
@@ -622,7 +643,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
           {/* Interactive Notes (Sticky Notes) Layer */}
           <div className="absolute inset-0 w-full h-full pointer-events-none z-10">
-            {board.notes.map((note) => {
+            {localNotes.map((note) => {
               const isEditing = editingNoteId === note.id;
               const hasComments = note.comments && note.comments.length > 0;
               const isClickMoving = clickMovingNote?.id === note.id;
