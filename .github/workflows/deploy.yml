@@ -25,10 +25,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
       - name: Type Check & Lint
         run: npm run lint
@@ -81,4 +85,3 @@ jobs:
           flags: '--allow-unauthenticated --port=3000'
           env_vars: |
             NODE_ENV=production
-            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}

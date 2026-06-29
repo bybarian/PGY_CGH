@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install dependencies first (leverage Docker layer caching)
 COPY package*.json ./
-RUN npm ci
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source files
 COPY . .
@@ -25,7 +25,7 @@ ENV PORT=3000
 # Copy necessary files from builder
 COPY package*.json ./
 # Install only production dependencies (excluding devDependencies)
-RUN npm ci --only=production
+RUN if [ -f package-lock.json ]; then npm ci --only=production; else npm install --only=production; fi
 
 COPY --from=builder /app/dist ./dist
 # Also copy static assets directory if it's placed in public or assets
