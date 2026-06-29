@@ -1,4 +1,4 @@
-name: Build and Deploy to Google Cloud Run
+name: Deploy static content to Pages
 
 on:
   push:
@@ -6,17 +6,24 @@ on:
       - main
       - master
 
-env:
-  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }} # Google Cloud Project ID
-  SERVICE_NAME: pgy-whiteboard # Name of your Cloud Run service
-  REGION: asia-east1 # Preferred region (e.g., asia-east1, asia-northeast1)
-  GAR_LOCATION: asia-east1 # Artifact Registry location
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queue.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Build & Deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -37,61 +44,20 @@ jobs:
       - name: Type Check & Lint
         run: npm run lint
 
-      # --- Google Cloud Authentication ---
-      # Option 1: Authenticate using a Service Account Key stored in GitHub Secrets
-      - name: Authenticate to Google Cloud
-        if: env.PROJECT_ID != ''
-        uses: google-github-actions/auth@v2
+      - name: Build Static App
+        run: npm run build
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          path: './dist'
 
-      # Option 2: Setup gcloud CLI
-      - name: Set up Cloud SDK
-        if: env.PROJECT_ID != ''
-        uses: google-github-actions/setup-gcloud@v2
-
-      # Configure Docker auth for Google Artifact Registry
-      - name: Configure Docker Auth
-        if: env.PROJECT_ID != ''
-        run: |
-          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
-
-      # Build and Push the Docker image to Artifact Registry
-      - name: Build and Push Docker Image
-        if: env.PROJECT_ID != ''
-        run: |
-          # Create repository if it doesn't exist
-          gcloud artifacts repositories create cloud-run-source-deploy \
-            --repository-format=docker \
-            --location=${{ env.GAR_LOCATION }} \
-            --description="Docker repository for Cloud Run images" \
-            --quiet || true
-            
-          IMAGE_TAG="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.SERVICE_NAME }}:${{ github.sha }}"
-          
-          docker build -t "$IMAGE_TAG" .
-          docker push "$IMAGE_TAG"
-          
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-      # Deploy the image to Cloud Run
-      - name: Deploy to Cloud Run
-        id: deploy
-        if: env.PROJECT_ID != ''
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: ${{ env.SERVICE_NAME }}
-          region: ${{ env.REGION }}
-          image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/cloud-run-source-deploy/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          flags: '--allow-unauthenticated --port=3000'
-          env_vars: |
-            NODE_ENV=production
-
-      - name: Show Cloud Run URL
-        if: env.PROJECT_ID != '' && steps.deploy.outputs.url != ''
-        run: |
-          echo "### 🚀 部署成功！" >> $GITHUB_STEP_SUMMARY
-          echo "您的網站已成功部署至 Google Cloud Run，網址如下：" >> $GITHUB_STEP_SUMMARY
-          echo "[👉 點擊開啟網站](${{ steps.deploy.outputs.url }})" >> $GITHUB_STEP_SUMMARY
-          echo "網址: ${{ steps.deploy.outputs.url }}"
-
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

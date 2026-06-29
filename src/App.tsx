@@ -3,7 +3,8 @@ import { GroupBoard } from "./types";
 import Header from "./components/Header";
 import Whiteboard from "./components/Whiteboard";
 import AllGroupsPresentation from "./components/AllGroupsPresentation";
-import { ChevronRight, Layers, HelpCircle, Activity, Globe, Compass } from "lucide-react";
+import { ChevronRight, Layers, HelpCircle, Activity, Globe, Compass, WifiOff } from "lucide-react";
+import { getBackendUrl, isOfflineMode, getDefaultGroups } from "./utils";
 
 export default function App() {
   const [activeView, setActiveView] = useState<"board" | "presentation">("board");
@@ -14,11 +15,35 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const consecutiveErrors = useRef(0);
 
-  // Fetch initial board state via REST
+  // Fetch initial board state (online REST / offline LocalStorage)
   const fetchState = async () => {
+    const offline = isOfflineMode();
+    if (offline) {
+      try {
+        setIsSyncing(true);
+        const stored = localStorage.getItem("whiteboard_groups");
+        if (stored) {
+          setGroups(JSON.parse(stored));
+        } else {
+          const defaults = getDefaultGroups();
+          setGroups(defaults);
+          localStorage.setItem("whiteboard_groups", JSON.stringify(defaults));
+        }
+        setActiveUsers(1);
+        setErrorMsg(null);
+      } catch (err) {
+        console.warn("Offline load failed:", err);
+      } finally {
+        setIsSyncing(false);
+      }
+      return;
+    }
+
+    // Online mode
     try {
       setIsSyncing(true);
-      const response = await fetch("/api/board");
+      const host = getBackendUrl();
+      const response = await fetch(`${host}/api/board`);
       if (response.ok) {
         const data = await response.json();
         setGroups(data.groups);
@@ -28,7 +53,6 @@ export default function App() {
       }
     } catch (err) {
       consecutiveErrors.current += 1;
-      // Quiet debug message to prevent false diagnostic error logs
       console.log("Sync status check in progress...");
       if (consecutiveErrors.current >= 4) {
         setErrorMsg("目前與大會伺服器連線中斷，正在自動嘗試重新連線...");
@@ -38,43 +62,62 @@ export default function App() {
     }
   };
 
-  // Connect to SSE synchronization stream
+  // Connect to SSE stream or localStorage synchronization
   useEffect(() => {
     fetchState();
 
-    // EventSource registration
-    const eventSource = new EventSource("/api/sync-stream");
-    
-    eventSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload && payload.groups) {
-          setGroups(payload.groups);
-          setActiveUsers(payload.activeUsers || 1);
-          setErrorMsg(null);
-          consecutiveErrors.current = 0;
+    const offline = isOfflineMode();
+    if (offline) {
+      // Listen to cross-tab updates for same machine multi-window presentation
+      const handleStorageChange = (e: StorageEvent) => {
+        if (e.key === "whiteboard_groups" && e.newValue) {
+          setGroups(JSON.parse(e.newValue));
         }
-      } catch (err) {
-        // Quiet debug message to prevent false diagnostic error logs
-        console.log("Parsing update payload...");
-      }
-    };
+      };
+      window.addEventListener("storage", handleStorageChange);
+      return () => {
+        window.removeEventListener("storage", handleStorageChange);
+      };
+    }
 
-    eventSource.onerror = () => {
-      // Quiet debug message to prevent false diagnostic error logs
-      console.log("Sync signal active.");
-    };
+    // Online EventSource configuration
+    const host = getBackendUrl();
+    let eventSource: EventSource | null = null;
+    
+    try {
+      eventSource = new EventSource(`${host}/api/sync-stream`);
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload && payload.groups) {
+            setGroups(payload.groups);
+            setActiveUsers(payload.activeUsers || 1);
+            setErrorMsg(null);
+            consecutiveErrors.current = 0;
+          }
+        } catch (err) {
+          console.log("Parsing update payload...");
+        }
+      };
+
+      eventSource.onerror = () => {
+        console.log("Sync signal active.");
+      };
+    } catch (e) {
+      console.warn("EventSource setup failed:", e);
+    }
 
     // Fallback HTTP polling every 4 seconds in parallel to ensure stability
     const pollingInterval = setInterval(fetchState, 4000);
 
     return () => {
-      eventSource.close();
+      if (eventSource) eventSource.close();
       clearInterval(pollingInterval);
     };
   }, []);
 
-  // Update board state on backend (which triggers SSE broadcast to other clients)
+  // Update board state on backend or local storage
   const handleUpdateBoard = async (updatedBoard: GroupBoard) => {
     // 1. Optimistic local update for sub-second visual feedback
     const updatedGroups = {
@@ -83,10 +126,21 @@ export default function App() {
     };
     setGroups(updatedGroups);
 
+    const offline = isOfflineMode();
+    if (offline) {
+      try {
+        localStorage.setItem("whiteboard_groups", JSON.stringify(updatedGroups));
+      } catch (e) {
+        console.warn("Offline save failed:", e);
+      }
+      return;
+    }
+
     // 2. Persist to server
     try {
       setIsSyncing(true);
-      const response = await fetch("/api/board/update", {
+      const host = getBackendUrl();
+      await fetch(`${host}/api/board/update`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -102,9 +156,25 @@ export default function App() {
 
   // Reset entire boards
   const handleResetBoard = async () => {
+    const offline = isOfflineMode();
+    if (offline) {
+      try {
+        setIsSyncing(true);
+        const defaults = getDefaultGroups();
+        setGroups(defaults);
+        localStorage.setItem("whiteboard_groups", JSON.stringify(defaults));
+      } catch (e) {
+        console.warn("Offline reset failed:", e);
+      } finally {
+        setIsSyncing(false);
+      }
+      return;
+    }
+
     try {
       setIsSyncing(true);
-      const response = await fetch("/api/board/reset", {
+      const host = getBackendUrl();
+      const response = await fetch(`${host}/api/board/reset`, {
         method: "POST",
       });
       if (response.ok) {
@@ -129,6 +199,39 @@ export default function App() {
         activeView={activeView}
         setActiveView={setActiveView}
       />
+
+      {/* Offline Mode Banner */}
+      {isOfflineMode() && (
+        <div className="bg-emerald-50 border-b border-emerald-150 text-emerald-900 text-[11px] px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 shadow-xs select-none">
+          <span className="flex items-center gap-1.5 font-medium">
+            <WifiOff className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+            <span>目前執行於「單機離線展示模式」（變更將儲存於此瀏覽器的 LocalStorage）。若您想與手機多裝置即時同步，請點擊此處</span>
+            <button
+              onClick={() => {
+                const url = prompt(
+                  "請輸入您的 Google Cloud Run 後端 API 網址 (例如 https://ais-dev-...run.app):",
+                  localStorage.getItem("whiteboard_backend_url") || ""
+                );
+                if (url !== null) {
+                  const cleaned = url.trim();
+                  if (cleaned) {
+                    localStorage.setItem("whiteboard_backend_url", cleaned);
+                  } else {
+                    localStorage.removeItem("whiteboard_backend_url");
+                  }
+                  window.location.reload();
+                }
+              }}
+              className="underline text-emerald-800 hover:text-emerald-950 font-bold ml-1 cursor-pointer"
+            >
+              配置雲端後端網址
+            </button>
+          </span>
+          <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded font-sans font-bold">
+            離線獨立運作
+          </span>
+        </div>
+      )}
 
       {/* Network Alert (Only displays if SSE fails) */}
       {errorMsg && (
