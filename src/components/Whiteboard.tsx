@@ -3,7 +3,7 @@ import { Note, DrawingPath, GroupBoard, Point } from "../types";
 import { 
   Plus, Trash2, Edit2, Check, MessageSquare, 
   PenTool, Eye, X, HelpCircle, User, UserCheck, 
-  ChevronRight, RefreshCw, Palette, Circle 
+  ChevronRight, RefreshCw, Palette, Circle, LayoutGrid
 } from "lucide-react";
 import { standardCases } from "../casesData";
 import ConfirmModal from "./ConfirmModal";
@@ -50,6 +50,17 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
     offsetX: number;
     offsetY: number;
   } | null>(null);
+
+  // Click-to-move state
+  const [clickMovingNote, setClickMovingNote] = useState<{
+    id: string;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+
+  // Track click duration and coordinates to distinguish simple click from dragging
+  const mouseDownTimeRef = useRef<number>(0);
+  const mouseDownPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Custom Modal States
   const [isCaseSelectOpen, setIsCaseSelectOpen] = useState(false);
@@ -108,9 +119,51 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
     }
   };
 
+  // Auto-Tidy / Align Notes Grouped by Color in a neat grid
+  const handleTidyUpNotes = () => {
+    if (board.notes.length === 0) return;
+    
+    const sortedNotes = [...board.notes].sort((a, b) => {
+      // Group by color, then sort by creation date
+      return a.color.localeCompare(b.color) || a.createdAt - b.createdAt;
+    });
+
+    const startX = 40;
+    const startY = 50;
+    const gapX = 280;
+    const gapY = 140;
+    const cols = 3; // fits nicely in typical layout width
+
+    const updatedNotes = sortedNotes.map((note, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      return {
+        ...note,
+        x: startX + col * gapX,
+        y: startY + row * gapY,
+        tilt: (idx % 3) - 1, // subtle natural tilt
+      };
+    });
+
+    onUpdateBoard({
+      ...board,
+      notes: updatedNotes,
+    });
+  };
+
   // Dragging Handlers
   const handleNoteMouseDown = (e: React.MouseEvent, note: Note) => {
     if (isDrawingMode || editingNoteId || activeCommentNoteId) return;
+    
+    // If we are currently click-moving a note, any click drops/pastes it!
+    if (clickMovingNote) {
+      e.preventDefault();
+      e.stopPropagation();
+      setClickMovingNote(null);
+      onUpdateBoard({ ...board });
+      return;
+    }
+
     e.preventDefault();
     
     const boardRect = boardRef.current?.getBoundingClientRect();
@@ -119,6 +172,9 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
     // Calculate mouse position relative to the note's top-left corner
     const mouseX = e.clientX - boardRect.left;
     const mouseY = e.clientY - boardRect.top;
+
+    mouseDownTimeRef.current = Date.now();
+    mouseDownPosRef.current = { x: mouseX, y: mouseY };
 
     setDraggingNote({
       id: note.id,
@@ -133,6 +189,21 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
     const mouseX = e.clientX - boardRect.left;
     const mouseY = e.clientY - boardRect.top;
+
+    // Handle Click Moving (Note follows mouse without being dragged)
+    if (clickMovingNote) {
+      const updatedNotes = board.notes.map((n) => {
+        if (n.id === clickMovingNote.id) {
+          const newX = Math.max(10, Math.min(boardRect.width - (n.width || 260) - 10, mouseX - clickMovingNote.offsetX));
+          const newY = Math.max(10, Math.min(boardRect.height - (n.height || 120) - 10, mouseY - clickMovingNote.offsetY));
+          return { ...n, x: newX, y: newY };
+        }
+        return n;
+      });
+
+      onUpdateBoard({ ...board, notes: updatedNotes });
+      return;
+    }
 
     // Handle Note Dragging
     if (draggingNote) {
@@ -158,8 +229,24 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
     }
   };
 
-  const handleBoardMouseUp = () => {
+  const handleBoardMouseUp = (e: React.MouseEvent) => {
     if (draggingNote) {
+      const boardRect = boardRef.current?.getBoundingClientRect();
+      if (boardRect) {
+        const mouseX = e.clientX - boardRect.left;
+        const mouseY = e.clientY - boardRect.top;
+        const clickDuration = Date.now() - mouseDownTimeRef.current;
+        const moveDistance = Math.hypot(mouseX - mouseDownPosRef.current.x, mouseY - mouseDownPosRef.current.y);
+
+        // If it was a quick click and didn't move, enter click-moving mode instead of drag!
+        if (clickDuration < 250 && moveDistance < 5) {
+          setClickMovingNote({
+            id: draggingNote.id,
+            offsetX: draggingNote.offsetX,
+            offsetY: draggingNote.offsetY,
+          });
+        }
+      }
       setDraggingNote(null);
       // Trigger update back to server on drag end
       onUpdateBoard({ ...board });
@@ -184,6 +271,15 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
 
   // Drawing touch handlers for tablet support
   const handleBoardMouseDown = (e: React.MouseEvent) => {
+    if (clickMovingNote) {
+      // If we are currently click-moving, this click means "drop/paste"!
+      e.preventDefault();
+      e.stopPropagation();
+      setClickMovingNote(null);
+      onUpdateBoard({ ...board });
+      return;
+    }
+
     if (!isDrawingMode) return;
     const boardRect = boardRef.current?.getBoundingClientRect();
     if (!boardRect) return;
@@ -336,8 +432,8 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
                   白板操作秘訣：
                 </span>
                 <ul className="list-disc pl-4 mt-1 space-y-0.5 font-sans text-gray-600">
-                  <li>滑鼠按住便利貼可**任意拖曳**。</li>
-                  <li>雙擊便利貼文字可**進入編輯模式**。</li>
+                  <li>滑鼠**點擊一下**便利貼可隨游標移動，**再點一下**即可粘貼固定。</li>
+                  <li>亦可按住便利貼**直接拖曳**，雙擊文字可**進入編輯模式**。</li>
                   <li>點擊對話泡泡可**新增匿名評論或追問**。</li>
                 </ul>
               </div>
@@ -408,13 +504,23 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
               ))}
             </div>
 
-            <button
+             <button
               onClick={() => handleAddNote()}
               disabled={!newNoteText.trim()}
-              className="flex items-center gap-1 bg-cathay-green hover:bg-cathay-green-hover text-white px-3.5 py-1.5 text-xs font-semibold rounded-lg shadow disabled:opacity-40 transition"
+              className="flex items-center gap-1 bg-cathay-green hover:bg-cathay-green-hover text-white px-3.5 py-1.5 text-xs font-semibold rounded-lg shadow disabled:opacity-40 transition shrink-0"
             >
               <Plus className="w-3.5 h-3.5" />
               新增貼紙
+            </button>
+
+            <button
+              onClick={handleTidyUpNotes}
+              disabled={board.notes.length === 0}
+              className="flex items-center gap-1 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-3 py-1.5 text-xs font-semibold rounded-lg shadow-sm disabled:opacity-40 transition shrink-0"
+              title="自動將所有便利貼依顏色分組並整齊排列，防止重疊"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-cathay-green" />
+              <span>便利貼統整</span>
             </button>
           </div>
 
@@ -470,6 +576,14 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
             </div>
           )}
 
+          {/* Instructions banner on click moving mode */}
+          {clickMovingNote && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 bg-sky-50 border border-sky-200 text-sky-800 px-4 py-1 text-xs font-bold rounded-full shadow-sm flex items-center gap-1.5 animate-bounce">
+              <span className="animate-ping w-2 h-2 rounded-full bg-sky-500 shrink-0"></span>
+              <span>便利貼移動中：移動滑鼠以調整位置，再次點擊白板任意處即可『粘貼固定』</span>
+            </div>
+          )}
+
           {/* Collaborative Drawing Overlay (Responsive SVG) */}
           <svg
             ref={boardRef as any}
@@ -477,7 +591,7 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
             onMouseMove={handleBoardMouseMove}
             onMouseUp={handleBoardMouseUp}
             className={`absolute inset-0 w-full h-full ${
-              isDrawingMode ? "cursor-crosshair z-10" : "z-0"
+              isDrawingMode ? "cursor-crosshair z-10" : clickMovingNote ? "cursor-move z-10" : "z-0"
             }`}
           >
             {/* Render all finished drawing lines */}
@@ -511,20 +625,25 @@ export default function Whiteboard({ board, onUpdateBoard }: WhiteboardProps) {
             {board.notes.map((note) => {
               const isEditing = editingNoteId === note.id;
               const hasComments = note.comments && note.comments.length > 0;
+              const isClickMoving = clickMovingNote?.id === note.id;
 
               return (
                 <div
                   key={note.id}
                   onMouseDown={(e) => handleNoteMouseDown(e, note)}
                   onDoubleClick={() => handleDoubleClickNote(note)}
-                  className="absolute p-4 rounded-lg shadow-md border border-black/10 flex flex-col justify-between select-none pointer-events-auto sticky-note-hover cursor-grab active:cursor-grabbing"
+                  className={`absolute p-4 rounded-lg flex flex-col justify-between select-none pointer-events-auto transition-all ${
+                    isClickMoving
+                      ? "ring-4 ring-sky-500 ring-offset-2 animate-pulse opacity-90 border-dashed shadow-2xl z-50 cursor-move"
+                      : "shadow-md border border-black/10 sticky-note-hover cursor-grab active:cursor-grabbing"
+                  }`}
                   style={{
                     left: `${note.x}px`,
                     top: `${note.y}px`,
                     width: `${note.width || 260}px`,
                     height: `${note.height || 120}px`,
                     backgroundColor: note.color,
-                    transform: `rotate(${note.tilt || 0}deg)`,
+                    transform: isClickMoving ? "scale(1.05) rotate(0deg)" : `rotate(${note.tilt || 0}deg)`,
                   }}
                 >
                   {/* Note header: Author, Date, Actions */}

@@ -189,7 +189,7 @@ export default function Header({
           </span>
           <span className="flex items-center gap-1 font-mono text-gray-400">
             <Server className="w-3 h-3 text-gray-300" />
-            實時連線模式 (SSE Sync)
+            實時雲端連線模式 (Firebase Sync)
           </span>
         </div>
 
